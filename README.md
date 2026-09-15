@@ -2,8 +2,7 @@
 
 Two standalone, dependency-light HTML tools built alongside "The ultimate decision guide:
 capacity strategies to optimise cost and compute" (delaware, FabCon Barcelona / dataMinds
-Mechelen 2026). Both are safe to share on their own after the talk — each carries its own
-delaware disclaimer/attribution footer.
+Mechelen 2026). 
 
 ## Running them
 
@@ -26,22 +25,6 @@ model size (GB), capacity pricing mode, E5 checkbox, viewer count, creator count
 the cheapest viable option and the viewer count where strategy A stops being the winner
 against B.
 
-### `pause-vs-reserve.html` — Pause + PAYG vs Reserved: safe vs dangerous scaling
-
-Three linked scenarios about scaling Fabric capacity up or down over time:
-
-- **Safe** — mixing a reserved baseline with a temporary PAYG scale-up, billed by whole days
-  per month, vs. reserving the bigger tier outright. Live inputs: baseline/scale-up SKU,
-  whether the baseline is reserved, days per month scaling.
-- **Dangerous** — scaling down mid-day, and how a 24h-trailing-average smoothing window can
-  carry a downscaled capacity into overage even though the SKU ceiling dropped instantly.
-  Live inputs: business-hours/downscale-to SKU, off-hours load (% of the business-hours
-  tier) — drag it past the `lo.cu / hi.cu` ratio for the chosen pair and the section flips
-  from "no risk" to "standing mismatch that never clears."
-- **Bursty** — a short burst above steady capacity, costed two ways (scale up and revert vs.
-  pay capacity overage) and under two smoothing regimes (24h background vs. 5-minute
-  interactive). Live inputs: steady SKU, burst intensity (%), burst duration (hours),
-  background load (% of steady capacity).
 
 ## Assumptions & caveats (read before quoting numbers from either tool)
 
@@ -62,5 +45,5 @@ Three linked scenarios about scaling Fabric capacity up or down over time:
 
 ## Attribution
 
-Built by delaware. Not official Microsoft guidance or a live pricing tool — each file's own
+Built by Frederik Declerck - delaware BeLux. Not official Microsoft guidance or a live pricing tool — each file's own
 footer carries the full disclaimer.

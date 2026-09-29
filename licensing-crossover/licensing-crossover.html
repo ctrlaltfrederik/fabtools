@@ -12,14 +12,10 @@
   --border:#E2E2E2; --border-strong:#E2E2E2; --border-accent:#EF463C;
   --radius:10px; --font-sans:"Century Gothic","Questrial",sans-serif;
   --surface-2:#ffffff; --surface-1:#F5F5F5; --surface-win:#F4FAFA;
-  /* --lic was #EF463C (dot-red) until 2026-09-08. Frederik asked for the Power BI
-     licence block in yellow on slides 23 and 27, so this asset follows to keep the
-     capture and the native slide bars in the same colour language. Yellow is NOT one
-     of the delaware six; the deviation is deliberate and his call. Changed again on
-     2026-09-11 from D99A00 to E6AD10, which is the dark yellow in Microsoft's own
-     power_bi_48_color.svg, so the block now uses a first-party Power BI colour rather
-     than an approximation. The icon is actually a gradient (F9E589 to C87E0E); E6AD10 is
-     the stop that keeps white bar labels legible, which the brighter F6D751 would not. */
+  /* Power BI licences use yellow, matching Power BI's own colour rather than one of
+     delaware's standard colours. E6AD10 is a stop in Microsoft's own Power BI icon
+     gradient (power_bi_48_color.svg, F9E589 to C87E0E), chosen because it keeps white
+     bar labels legible where the brighter end of that gradient would not. */
   --cap:#72C4BF; --lic:#E6AD10;
 }
 *{box-sizing:border-box;}
@@ -54,8 +50,7 @@ input[type=checkbox]{accent-color:var(--border-accent);}
 .legend-sw{width:16px;height:16px;border-radius:4px;flex:none;}
 a{color:var(--text-accent);text-decoration:underline;text-underline-offset:2px;}
 
-/* Added 2026-09-18, when this file became a take-home artifact rather than only a slide
-   capture source. It will be opened from a QR code on a phone and printed. */
+/* Mobile and print styles, since this file may be opened on a phone or printed. */
 @media (max-width:760px){
   body{padding:18px;font-size:16px;}
   h1{font-size:23px;}
@@ -75,9 +70,6 @@ a{color:var(--text-accent);text-decoration:underline;text-underline-offset:2px;}
   <h1>fabric licensing crossover: Pro vs PPU vs F64</h1>
   <span id="pricing-pill" class="mode-pill reserved"><span class="dot"></span><span id="pricing-pill-text">Reserved pricing, 1yr, -40.5%</span></span>
 </div>
-<!-- Added 2026-09-18. The conclusion paragraph below the bars already teaches the reader
-     where to look, but nothing said so up front, and this file now goes out without a
-     presenter attached to say it. The p.subtitle rule existed and was never used. -->
 <p class="subtitle">Three paths costed against one capacity. Set your viewer and creator counts, then read which bar is shortest and where the crossover tick sits on the viewers slider.</p>
 
 <div style="display:flex;flex-wrap:wrap;gap:20px;margin-bottom:14px;">
@@ -138,11 +130,10 @@ a{color:var(--text-accent);text-decoration:underline;text-underline-offset:2px;}
 <p style="font-size:13px;color:var(--text-muted);margin:0;line-height:1.6;max-width:1120px;">Built by Frederik Declerck - delaware BeLux, an independent interactive model for illustration. Not official Microsoft guidance or a live pricing tool. Re-check current Fabric and Power BI prices before acting on any number here. More on our Microsoft Fabric work at <a href="https://www.delaware.pro/en-be/solutions/microsoft/microsoft-fabric" target="_blank" rel="noopener">delaware.pro</a>. Companion tool: <a href="../capacity-levers/capacity-levers.html">the reserve, pause, scale and overage levers</a>.</p>
 
 <script>
-// Prices re-sourced 2026-09-11 from Microsoft's Azure Retail Prices API
+// Sourced 2026-09-11 from Microsoft's Azure Retail Prices API
 // (currencyCode=EUR, serviceName eq 'Microsoft Fabric', armRegionName eq 'northeurope'):
 // PAYG EUR 0.1631/CU-hour x 730 h = 119.063 per CU per month; reserved 1-year
 // EUR 850.0773/CU-year / 12 = 70.840 per CU per month, a 40.5% discount.
-// The previous values were the May 2026 basis and ran about 10% high.
 const SKUS = [
   {name:'F8', cu:8, payg:953, reserved:567, maxModelGB:3},
   {name:'F16', cu:16, payg:1905, reserved:1133, maxModelGB:5},
@@ -156,11 +147,9 @@ const SKUS = [
 ];
 const F64 = SKUS.find(function(s){ return s.name === 'F64'; });
 // Pro and PPU: microsoft.com/nl-be Power BI pricing, ex-VAT, annual payment, checked
-// 2026-09-11. Previously 14 and 24, which are Microsoft's US DOLLAR figures - the euro
-// prices have never been those numbers, so this was likely a currency mix-up rather than
-// price drift. Licence pricing is locale-bound, not region-selectable like capacity.
-// PPU_E5_BUMP is now derived rather than hard-coded: it is simply PPU minus Pro, the
-// premium you still pay when E5 already covers Pro. The old literal 10 was unsourced.
+// 2026-09-11. Licence pricing is locale-bound, not region-selectable like capacity.
+// PPU_E5_BUMP is derived as PPU minus Pro — the premium you still pay when E5 already
+// covers Pro.
 const PRO = 12.10, PPU = 20.80, PPU_E5_BUMP = PPU - PRO;
 const VIEWERS_MAX = 600;
 
@@ -193,9 +182,9 @@ function fmt(n){
   const grouped = Math.abs(Math.round(n)).toLocaleString('en-US').replace(/,/g, '.');
   return '€ ' + sign + grouped;
 }
-// Per-user licence rates need their cents: Frederik asked for the unit price to be
-// visible, and rounding EUR 12.10 to "12" and EUR 20.80 to "21" defeats that. Totals
-// stay whole-euro via fmt(); only the per-user rate uses fmtU().
+// Per-user licence rates need their cents: rounding EUR 12.10 to "12" and EUR 20.80 to
+// "21" would hide the actual unit price. Totals stay whole-euro via fmt(); only the
+// per-user rate uses fmtU().
 function fmtU(n){
   const sign = n < 0 ? '-' : '';
   const parts = Math.abs(n).toFixed(2).split('.');

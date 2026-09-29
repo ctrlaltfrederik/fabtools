@@ -6,99 +6,30 @@
 <meta name="description" content="Three Microsoft Fabric capacity scaling levers, costed: pay-as-you-go or reserve, scale for background load or pay the overage or pause, scale for interactive load or pay the overage. Built by delaware.">
 <title>fabric capacity levers: reserve, pause, scale, overage</title>
 <!--
-  v2, 2026-09-18. Rewritten from the 2026-09-15 version.
+  Three levers, each costing a Fabric capacity scaling decision two or three ways:
+  1. base capacity plus a pay-as-you-go top-up for peak days, against reserving the
+     peak tier outright.
+  2. scaling up and reverting, paying the overage, or pausing, for a background burst.
+  3. scaling up and reverting, or paying the overage, for an interactive burst.
 
-  Three things changed and all three were blockers for handing this file to an audience:
+  No external requests: every chart is hand-drawn inline SVG, so a blocked CDN request
+  can't leave charts broken. Background load uses Microsoft's own Fabric Capacity
+  Metrics app blue (#0078D4) so the colour means the same thing there and here;
+  interactive load and overage use primary red (#C42828); reserved/committed values use
+  teal (#72C4BF), matching the licensing-crossover companion tool.
 
-  1. v1 did not model pausing at all, despite the filename. Its section A was
-     "reserve a baseline, add a pay-as-you-go scale-up by whole days", which is a good
-     lever but not the namesake one. The deck has since grown slide 57 (the 59%
-     crossover) and slide 62 (bill shock) and neither was in the tool.
-  2. v1 loaded Chart.js from cdnjs with no integrity hash and no fallback, so a blocked
-     request left every chart throwing and every cost tile reading "...". Every chart
-     here is hand-drawn inline SVG. There are no external requests in this file except
-     the two footer links.
-  3. v1 predated the deck's current chart language. The load charts here follow the
-     2026-09-17 generation (slides 59, 60, 61): background in Metrics-app blue #0078D4,
-     interactive and overage in primary red #C42828, ceiling dashed #3C3C3C. Cost
-     comparisons keep the older teal/dot-red pairing from crossover.html, because that
-     is what teal means in this set: reserved, committed, flat.
+  Lever 2's pause visual is modelled on a real Fabric Capacity Metrics screenshot: not a
+  cliff to zero. A resume shows a genuine spike as the backlog drains (CU% briefly well
+  past the ceiling), a short dip, then an eased recovery to the steady floor —
+  illustrative shape only; the billed pauseCost is an accumulated-CU-hours scalar
+  regardless of how the recovery is drawn.
 
-  Structure follows the deck's own scale block, slides 57 to 62, and uses the deck's own
-  word for these choices: lever.
-
-  Revised 2026-09-22, on review:
-  - Lever 1 dropped the "pause" framing. Pause is one way to land below 100%
-    utilisation, but it isn't the lever — the choice being costed is pay-as-you-go
-    against a 1-year reservation, and utilisation is just the input that decides which
-    one wins. Retitled to say that directly.
-  - Lever 3 gained a fill under the interactive usage line, matching lever 2's
-    background fill, so the two read at the same visual weight.
-  - Lever 4 was rebuilt around one input — smoothed usage, as a percent of the current
-    tier's ceiling — with both bills (pause, or scale down) computed directly from it,
-    instead of the old two-input CU-second/timepoint mechanic. That mechanic is gone.
-    A genuine derived rule fell out of the simplification: pausing beats scaling down
-    once smoothed usage passes 1.5x the smaller tier's own ceiling, independent of the
-    current tier and the PAYG rate — the same shape as the 59.5% and 133.3% crossovers
-    elsewhere in this file.
-
-  Revised 2026-09-27, a bigger pass across all four levers:
-  - Lever 1 rebuilt entirely. Its two controls used to answer two unrelated questions
-    (a same-tier PAYG-vs-reserved chart, and a "peak tier / days at peak" pair feeding
-    a third tile with no chart of its own). One scenario now: a base tier reserved all
-    month, topped up with pay-as-you-go for the days that need more, against reserving
-    the peak tier outright — with a visual for each half (capacity across the month,
-    and the cost crossover). The crossover lands close to 17.85 days for almost any
-    base/peak pair, not exactly the same identity the old 59.5% one was, since the
-    reservation discount is close to but not exactly uniform to the last published euro.
-  - Lever 2 gained a third panel. All three remedies (scale-and-revert, pay overage,
-    pause) already had tiles; now all three have a chart, using a new shared
-    `pausePanel()` helper that also draws lever 4's pause panel.
-  - Lever 3's usage line is now spiky — jittered, deterministically (never
-    `Math.random()`), display-only: the fill, the overage wash and every billed number
-    still come from the original clean array. Floor and burst both jitter now (floor
-    used to be flat), floor capped to 60-100% of the ceiling so it never crosses into
-    overage on its own, both indexed by the hour value rather than by sub-step count so
-    individual spikes read as distinct instead of colliding into a blur.
-  - Lever 4 reframed again, from "pausing, and scaling down too early" (a downsizing
-    scenario) to "background at capacity: scale up, or pause" (a background job already
-    over the ceiling right now). Reuses lever 2's exact costBackground model — same
-    mechanic, different alternative (pause instead of pay-overage-forever) and framing
-    (reactive, not planned). The pause panel is where "the future debt" lives: the
-    smoothed curve climbing over the buildup window is the projection itself, drawn as
-    far as the overload% and duration inputs say it would climb, then the pause's
-    spike/dip/recovery (see pausePanel, below). Checked before building: pausing is
-    structurally cheaper at every input tried here too, the same finding as lever 2's,
-    and stated the same honest way — the reason to scale up anyway is that it doesn't
-    cancel the running job.
-  - The pause visual itself changed on review against a real Fabric Capacity Metrics
-    screenshot: not a cliff to zero. A resume shows a genuine spike as the backlog
-    drains (CU% briefly well past the ceiling, the "peak of repaid consumption"), a
-    short dip right after, then an eased recovery back to the steady floor. Illustrative
-    shape only — the billed pauseCost is unchanged, an accumulated-CU-hours scalar, no
-    matter how the recovery is drawn.
-
-  Fixed 2026-09-28: costBackground was sizing the scale-up tier against the raw,
-  instantaneous burst level, not the 24h-smoothed value background billing actually
-  checks. That's needlessly conservative — an F16 scaling to F32 can absorb well past
-  300% of ceiling for a few hours, since background smoothing dilutes the raw spike long
-  before it ever reaches the smoothed metric a ceiling is compared against. burstTierCU
-  is now sized off the peak of the smoothed curve during the scale-up window instead of
-  the raw level. costInteractive is untouched, since 5-minute smoothing is close enough
-  to instantaneous that raw-level sizing is already correct there. The 200%/10h default
-  is unchanged (both methods agree on F32); the difference only shows up at higher
-  intensity or shorter duration, e.g. 250% for 5h now picks F32 where it used to pick F64.
-
-  Dropped 2026-09-28: lever 4 ("background at capacity: scale up, or pause"). It reused
-  costBackground exactly as lever 2 did, differing only in framing copy (a reactive,
-  already-happening overload instead of a planned future burst) — never a distinct model.
-  The tier fix above made the duplication impossible to ignore: pausing was already
-  structurally cheaper at every input tried (round 3), and now some slider positions show
-  scaling up costing nothing at all, since the smoothed metric never actually crosses the
-  ceiling — which also quietly contradicted the lever's own premise that the operation is
-  "at capacity" in the first place. No input range was left where it demonstrated a real
-  trade-off. Three levers now, not four; lever 2's own pause panel already covers the
-  reactive reading, whether the burst was planned or is already underway.
+  Lever 2's scale-up tier is sized off the peak of the 24h-smoothed curve during the
+  scale-up window, not the raw instantaneous burst level — background billing checks
+  the smoothed value, so sizing off the raw level is needlessly conservative (an F16
+  scaling to F32 can absorb well past 300% of ceiling for a few hours once smoothed).
+  Lever 3 is untouched, since 5-minute smoothing is close enough to instantaneous that
+  raw-level sizing is already correct there.
 -->
 <style>
 :root{
@@ -107,10 +38,10 @@
   --border:#E2E2E2; --border-accent:#EF463C;
   --radius:10px; --font-sans:"Century Gothic","Questrial",sans-serif;
   --surface-2:#ffffff; --surface-1:#F5F5F5; --surface-win:#F4FAFA;
-  /* Chart language, 2026-09-17 generation. Blue is Microsoft's own Fabric Capacity
-     Metrics app blue, so a reader who has the app open sees the same colour mean the
-     same thing. Red is primary-red, not dot-red: dot-red is reserved for interface
-     accents here (h1, slider tint, the pay-as-you-go line). */
+  /* Blue is Microsoft's own Fabric Capacity Metrics app blue, so a reader who has the
+     app open sees the same colour mean the same thing. Red is primary-red, not
+     dot-red: dot-red is reserved for interface accents here (h1, slider tint, the
+     pay-as-you-go line). */
   --bg-load:#0078D4;         /* background load, smoothed 24h */
   --int-load:#C42828;        /* interactive load, and the overage wash */
   --reserved:#72C4BF;        /* reserved, committed, flat */
@@ -244,9 +175,7 @@ a{color:var(--text-accent);text-decoration:underline;text-underline-offset:2px;}
 
   <div class="ctl">
     <div><label for="l2-sku">Steady tier</label><select id="l2-sku"></select></div>
-    <!-- Defaults to 200%, a full tier double, where a breakeven duration actually exists.
-         At v1's 150% default the overage is cheaper at every duration up to 24 hours, so
-         the lever opened with nothing to show. -->
+    <!-- Defaults to 200%, a full tier double, where a breakeven duration actually exists. -->
     <div class="slide"><label for="l2-int">Burst usage</label>
       <input type="range" id="l2-int" min="110" max="250" step="5" value="200">
       <span class="out" id="l2-int-out" style="min-width:52px;">200%</span></div>
@@ -315,7 +244,7 @@ a{color:var(--text-accent);text-decoration:underline;text-underline-offset:2px;}
 <script>
 /* ===================================================================
    prices and rates
-   Re-sourced 2026-09-11 from Microsoft's Azure Retail Prices API
+   Sourced 2026-09-11 from Microsoft's Azure Retail Prices API
    (currencyCode=EUR, serviceName eq 'Microsoft Fabric',
    armRegionName eq 'northeurope'). Same basis as licensing-crossover.html.
    PAYG EUR 0.1631/CU-hour x 730 h = 119.063 per CU per month.
@@ -336,8 +265,7 @@ var SKUS = [
 var paygRate = SKUS[0].payg / (SKUS[0].cu * 730);   /* EUR 0.163185 per CU-hour */
 
 /* One named constant, deliberately. The source line tells the reader to re-confirm the
-   multiplier before relying on it, so there has to be exactly one place to change it.
-   v1 had the bare literal 3 in four places. */
+   multiplier before relying on it, so there has to be exactly one place to change it. */
 var OVERAGE_MULTIPLIER = 3;
 
 /* ===================================================================
@@ -345,9 +273,7 @@ var OVERAGE_MULTIPLIER = 3;
    =================================================================== */
 function el(id){ return document.getElementById(id); }
 /* € 1.234,56: space after the sign, dot thousands, comma decimals -- matching
-   licensing-crossover.html and the rest of the deck/toolset. Supersedes the earlier
-   comma-grouping choice made for a mixed international room; Frederik's 2026-09-28
-   instruction was to make every euro value consistent with this convention. */
+   licensing-crossover.html for a consistent euro format across both tools. */
 function fmt(n){
   const sign = Math.round(n) < 0 ? '-' : '';
   const grouped = Math.abs(Math.round(n)).toLocaleString('en-US').replace(/,/g, '.');
@@ -370,8 +296,8 @@ function fillSelect(sel, defaultName){
 }
 
 /* Keep a paired select strictly above (dir 1) or below (dir -1) its anchor, so the model
-   can never be put in a state that reads as nonsense in a screenshot. v1 allowed "scale
-   up to" below "baseline", which silently produced a free scale-up and a blank caption. */
+   can never be put in a state that reads as nonsense -- e.g. "scale up to" below
+   "baseline", which would silently produce a free scale-up and a blank caption. */
 function constrain(anchorSel, otherSel, dir){
   var a = +anchorSel.value, cur = +otherSel.value, out = '', i;
   for (i = 0; i < SKUS.length; i++){
@@ -391,9 +317,9 @@ function constrain(anchorSel, otherSel, dir){
 
 /* ===================================================================
    svg plot helpers
-   Stroke widths and font sizes follow the 2026-09-17 generated charts
+   Stroke widths and font sizes
    (1 gridline, 2 axis, 3 ceiling, 3.5 interactive, 7 primary, 11 halo)
-   on the same 1580-wide coordinate frame, so the two sets read as one language.
+   share one 1580-wide coordinate frame, so every chart in this file reads as one language.
    =================================================================== */
 /* The charts are drawn on a fixed 1580-wide coordinate frame and scaled to the container
    by CSS, so on a phone a font-size of 28 lands at about 6 real pixels. This file is meant
@@ -637,11 +563,8 @@ function tileHTML(label, val, sub, win, pill){
 
 /* ===================================================================
    lever 1: base capacity, plus peak for N days
-   Rebuilt 2026-09-27. The old lever ran two unrelated scenarios off two
-   different sliders: "days running" drove a same-tier PAYG-vs-reserved chart,
-   while "peak tier / days at peak" fed a third tile with no chart of its own.
-   One scenario now, with a visual for each half of it: a base tier reserved
-   the whole month, topped up with pay-as-you-go for the days that need more,
+   One scenario, with a visual for each half of it: a base tier reserved the
+   whole month, topped up with pay-as-you-go for the days that need more,
    compared against just reserving the peak tier outright.
    =================================================================== */
 function renderL1(){
@@ -655,8 +578,7 @@ function renderL1(){
   var outrightCost = scale.reserved;
   /* Comes out close to 17.85 days for almost any base/peak pair, not exactly --
      the reservation discount is close to a uniform 40.5% across tiers, but the
-     published prices are rounded to the euro, not derived from one exact rate,
-     so this isn't the same kind of closed identity the old 59.5% crossover was. */
+     published prices are rounded to the euro, not derived from one exact rate. */
   var crossN = 30 * (scale.reserved - base.reserved) / (scale.payg - base.payg);
 
   /* panel A: capacity across the month -- a flat reserved floor, with a raised
@@ -805,8 +727,7 @@ function renderL2(){
 
   /* Breakeven is found numerically, for scale vs. overage only -- there is no closed
      form for the background case, because the tail depends on the shape of the
-     smoothed curve. A draft slide once carried an invented formula for this and it
-     was removed. Do not reintroduce one. Pause has no comparable breakeven to find:
+     smoothed curve. Pause has no comparable breakeven to find:
      it is exactly one-third of the "pay overage" figure at every duration (the same
      debt, billed at 1x instead of 3x), so it is cheaper than paying overage always,
      and cheaper than scaling and reverting on every input tried -- stated plainly
@@ -819,8 +740,7 @@ function renderL2(){
   /* Pausing is exactly one-third of the "pay overage" figure at every input (the same
      debt, billed at 1x instead of 3x), and 1x is never worse than 3x, so it never
      loses to either alternative -- checked across the sliders' full range, not just
-     asserted. Lead with that plainly, rather than still calling "pay overage" the
-     winner of a two-way race the tiles no longer show. */
+     asserted. */
   var v = '<b>Pausing is cheapest, by ' + fmt2(Math.min(m.totalScale, m.overageCost) - pauseCost) +
     '.</b> It settles the same debt at 1x instead of 3x, but cancels the job. If the job has to run to completion, that\'s off the table, and the choice is between the other two: ';
   v += overageWins

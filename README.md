@@ -38,6 +38,12 @@ offline — open `capacity-levers/capacity-levers.html` in a browser.
 
 → [Full details](capacity-levers/README.md)
 
+## Talks
+
+Slide decks from the conference and community talks these tools were built for.
+
+→ [Full list](talks/)
+
 ## Attribution
 
 Built by Frederik Declerck for "The ultimate decision guide: capacity strategies to

@@ -1,0 +1,954 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Three Microsoft Fabric capacity scaling levers, costed: pay-as-you-go or reserve, scale for background load or pay the overage or pause, scale for interactive load or pay the overage. Built by delaware.">
+<title>fabric capacity levers: reserve, pause, scale, overage</title>
+<!--
+  v2, 2026-09-18. Rewritten from the 2026-09-15 version.
+
+  Three things changed and all three were blockers for handing this file to an audience:
+
+  1. v1 did not model pausing at all, despite the filename. Its section A was
+     "reserve a baseline, add a pay-as-you-go scale-up by whole days", which is a good
+     lever but not the namesake one. The deck has since grown slide 57 (the 59%
+     crossover) and slide 62 (bill shock) and neither was in the tool.
+  2. v1 loaded Chart.js from cdnjs with no integrity hash and no fallback, so a blocked
+     request left every chart throwing and every cost tile reading "...". Every chart
+     here is hand-drawn inline SVG. There are no external requests in this file except
+     the two footer links.
+  3. v1 predated the deck's current chart language. The load charts here follow the
+     2026-09-17 generation (slides 59, 60, 61): background in Metrics-app blue #0078D4,
+     interactive and overage in primary red #C42828, ceiling dashed #3C3C3C. Cost
+     comparisons keep the older teal/dot-red pairing from crossover.html, because that
+     is what teal means in this set: reserved, committed, flat.
+
+  Structure follows the deck's own scale block, slides 57 to 62, and uses the deck's own
+  word for these choices: lever.
+
+  Revised 2026-09-22, on review:
+  - Lever 1 dropped the "pause" framing. Pause is one way to land below 100%
+    utilisation, but it isn't the lever — the choice being costed is pay-as-you-go
+    against a 1-year reservation, and utilisation is just the input that decides which
+    one wins. Retitled to say that directly.
+  - Lever 3 gained a fill under the interactive usage line, matching lever 2's
+    background fill, so the two read at the same visual weight.
+  - Lever 4 was rebuilt around one input — smoothed usage, as a percent of the current
+    tier's ceiling — with both bills (pause, or scale down) computed directly from it,
+    instead of the old two-input CU-second/timepoint mechanic. That mechanic is gone.
+    A genuine derived rule fell out of the simplification: pausing beats scaling down
+    once smoothed usage passes 1.5x the smaller tier's own ceiling, independent of the
+    current tier and the PAYG rate — the same shape as the 59.5% and 133.3% crossovers
+    elsewhere in this file.
+
+  Revised 2026-09-27, a bigger pass across all four levers:
+  - Lever 1 rebuilt entirely. Its two controls used to answer two unrelated questions
+    (a same-tier PAYG-vs-reserved chart, and a "peak tier / days at peak" pair feeding
+    a third tile with no chart of its own). One scenario now: a base tier reserved all
+    month, topped up with pay-as-you-go for the days that need more, against reserving
+    the peak tier outright — with a visual for each half (capacity across the month,
+    and the cost crossover). The crossover lands close to 17.85 days for almost any
+    base/peak pair, not exactly the same identity the old 59.5% one was, since the
+    reservation discount is close to but not exactly uniform to the last published euro.
+  - Lever 2 gained a third panel. All three remedies (scale-and-revert, pay overage,
+    pause) already had tiles; now all three have a chart, using a new shared
+    `pausePanel()` helper that also draws lever 4's pause panel.
+  - Lever 3's usage line is now spiky — jittered, deterministically (never
+    `Math.random()`), display-only: the fill, the overage wash and every billed number
+    still come from the original clean array. Floor and burst both jitter now (floor
+    used to be flat), floor capped to 60-100% of the ceiling so it never crosses into
+    overage on its own, both indexed by the hour value rather than by sub-step count so
+    individual spikes read as distinct instead of colliding into a blur.
+  - Lever 4 reframed again, from "pausing, and scaling down too early" (a downsizing
+    scenario) to "background at capacity: scale up, or pause" (a background job already
+    over the ceiling right now). Reuses lever 2's exact costBackground model — same
+    mechanic, different alternative (pause instead of pay-overage-forever) and framing
+    (reactive, not planned). The pause panel is where "the future debt" lives: the
+    smoothed curve climbing over the buildup window is the projection itself, drawn as
+    far as the overload% and duration inputs say it would climb, then the pause's
+    spike/dip/recovery (see pausePanel, below). Checked before building: pausing is
+    structurally cheaper at every input tried here too, the same finding as lever 2's,
+    and stated the same honest way — the reason to scale up anyway is that it doesn't
+    cancel the running job.
+  - The pause visual itself changed on review against a real Fabric Capacity Metrics
+    screenshot: not a cliff to zero. A resume shows a genuine spike as the backlog
+    drains (CU% briefly well past the ceiling, the "peak of repaid consumption"), a
+    short dip right after, then an eased recovery back to the steady floor. Illustrative
+    shape only — the billed pauseCost is unchanged, an accumulated-CU-hours scalar, no
+    matter how the recovery is drawn.
+
+  Fixed 2026-09-28: costBackground was sizing the scale-up tier against the raw,
+  instantaneous burst level, not the 24h-smoothed value background billing actually
+  checks. That's needlessly conservative — an F16 scaling to F32 can absorb well past
+  300% of ceiling for a few hours, since background smoothing dilutes the raw spike long
+  before it ever reaches the smoothed metric a ceiling is compared against. burstTierCU
+  is now sized off the peak of the smoothed curve during the scale-up window instead of
+  the raw level. costInteractive is untouched, since 5-minute smoothing is close enough
+  to instantaneous that raw-level sizing is already correct there. The 200%/10h default
+  is unchanged (both methods agree on F32); the difference only shows up at higher
+  intensity or shorter duration, e.g. 250% for 5h now picks F32 where it used to pick F64.
+
+  Dropped 2026-09-28: lever 4 ("background at capacity: scale up, or pause"). It reused
+  costBackground exactly as lever 2 did, differing only in framing copy (a reactive,
+  already-happening overload instead of a planned future burst) — never a distinct model.
+  The tier fix above made the duplication impossible to ignore: pausing was already
+  structurally cheaper at every input tried (round 3), and now some slider positions show
+  scaling up costing nothing at all, since the smoothed metric never actually crosses the
+  ceiling — which also quietly contradicted the lever's own premise that the operation is
+  "at capacity" in the first place. No input range was left where it demonstrated a real
+  trade-off. Three levers now, not four; lever 2's own pause panel already covers the
+  reactive reading, whether the burst was planned or is already underway.
+-->
+<style>
+:root{
+  --text-primary:#3C3C3C; --text-muted:#999999;
+  --text-accent:#EF463C; --text-danger:#941914;
+  --border:#E2E2E2; --border-accent:#EF463C;
+  --radius:10px; --font-sans:"Century Gothic","Questrial",sans-serif;
+  --surface-2:#ffffff; --surface-1:#F5F5F5; --surface-win:#F4FAFA;
+  /* Chart language, 2026-09-17 generation. Blue is Microsoft's own Fabric Capacity
+     Metrics app blue, so a reader who has the app open sees the same colour mean the
+     same thing. Red is primary-red, not dot-red: dot-red is reserved for interface
+     accents here (h1, slider tint, the pay-as-you-go line). */
+  --bg-load:#0078D4;         /* background load, smoothed 24h */
+  --int-load:#C42828;        /* interactive load, and the overage wash */
+  --reserved:#72C4BF;        /* reserved, committed, flat */
+  --reserved-ink:#3E8C88;    /* teal as type, where #72C4BF would be illegible */
+  --raw:#AD9BCB;             /* actual (raw) usage, before smoothing */
+}
+*{box-sizing:border-box;}
+body{background:var(--surface-2);color:var(--text-primary);font-family:var(--font-sans);
+  margin:0;padding:32px;line-height:1.5;font-size:17px;}
+h1{font-size:28px;font-weight:500;margin:0 0 4px;color:var(--text-accent);letter-spacing:-0.01em;}
+h2{font-size:20px;font-weight:500;margin:0;color:var(--text-primary);}
+h2 .n{color:var(--text-muted);font-weight:500;margin-right:10px;}
+p.read{font-size:14px;color:var(--text-muted);margin:2px 0 16px;max-width:880px;}
+
+section.lever{border:1px solid var(--border);border-radius:var(--radius);
+  padding:22px 24px;background:var(--surface-2);box-shadow:0 2px 8px rgba(0,0,0,0.08);
+  margin:0 0 26px;}
+
+select,input[type=range]{font-family:inherit;font-size:15px;}
+select{height:38px;border-radius:8px;border:1px solid var(--border);padding:0 9px;
+  background:var(--surface-2);color:var(--text-primary);}
+input[type=range]{accent-color:var(--border-accent);width:100%;display:block;height:20px;}
+
+.ctl{display:flex;flex-wrap:wrap;gap:18px 24px;margin-bottom:18px;align-items:center;}
+.ctl > div{display:flex;align-items:center;gap:10px;}
+.ctl label{font-size:15px;color:var(--text-primary);white-space:nowrap;}
+.ctl .out{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;}
+.ctl .slide{flex:1;min-width:230px;}
+.ctl .slide input{flex:1;}
+
+/* minmax(0,1fr), not 1fr: a bare 1fr track floors at the item's min-content width, and an
+   SVG whose only sizing is a 1580-wide viewBox can contribute that 1580 to it. */
+.charts{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;margin-bottom:6px;}
+.charts.one{grid-template-columns:minmax(0,1fr);}
+.charts.three{grid-template-columns:repeat(3,minmax(0,1fr));}
+.chart h3{font-size:14px;font-weight:700;margin:0 0 6px;color:var(--text-primary);}
+svg.plot{display:block;width:100%;max-width:100%;height:auto;}
+
+.legend{display:flex;flex-wrap:wrap;gap:10px 26px;font-size:14px;
+  color:var(--text-primary);margin:6px 0 18px;}
+.legend span{display:flex;align-items:center;gap:8px;}
+.legend i{width:26px;height:13px;flex:none;display:block;}
+
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(178px,1fr));gap:12px;margin-bottom:14px;}
+.tile{background:var(--surface-1);border-radius:var(--radius);padding:11px 14px;}
+.tile.winner{background:var(--surface-win);}
+.tile .label{font-size:13px;color:var(--text-primary);margin:0 0 3px;}
+.tile .val{font-size:22px;font-weight:700;margin:0;font-variant-numeric:tabular-nums;}
+.tile .sub{font-size:12px;color:var(--text-muted);margin:2px 0 0;font-variant-numeric:tabular-nums;}
+
+p.verdict{font-size:16px;margin:0;line-height:1.5;max-width:1000px;font-variant-numeric:tabular-nums;}
+p.guard{font-size:13px;color:var(--text-muted);margin:8px 0 0;max-width:1000px;}
+
+.pill{display:inline-flex;align-items:center;border-radius:999px;padding:2px 12px;
+  font-size:13px;font-weight:700;margin-left:8px;vertical-align:2px;white-space:nowrap;}
+.pill-best{background:#72C4BF;color:#3C3C3C;}
+.pill-warn{background:#F7EAE9;border:1px solid #941914;color:#941914;}
+.mode-pill{display:inline-flex;align-items:center;gap:9px;border-radius:999px;padding:7px 16px;
+  font-size:14px;font-weight:700;color:var(--text-primary);border:2px solid #72C4BF;
+  background:#EDF7F6;white-space:nowrap;}
+.mode-pill .dot{width:11px;height:11px;border-radius:50%;flex:none;background:#72C4BF;}
+
+p.src{font-size:13px;color:var(--text-muted);margin:0;line-height:1.5;max-width:1000px;}
+p.foot{font-size:13px;color:var(--text-muted);margin:0;line-height:1.6;max-width:1000px;}
+a{color:var(--text-accent);text-decoration:underline;text-underline-offset:2px;}
+
+@media (max-width:760px){
+  body{padding:18px;font-size:16px;}
+  h1{font-size:23px;}
+  section.lever{padding:16px 15px;}
+  .charts{grid-template-columns:minmax(0,1fr);}
+  /* .charts.three is two classes, more specific than the plain .charts rule just
+     above -- inside a media query specificity still wins over source order, so
+     without this override the three-panel row silently ignored the 1-column
+     collapse and squeezed all three into one row on a phone. Caught by measuring
+     a real render, not by inspecting the rule. */
+  .charts.three{grid-template-columns:minmax(0,1fr);}
+  .ctl{gap:14px 18px;}
+  .ctl .slide{min-width:100%;}
+  /* The pill is the one nowrap element long enough to push the document past a phone
+     viewport: at 14px bold it is about 300px and its own line still overflows 375. */
+  .mode-pill{white-space:normal;font-size:13px;padding:6px 13px;}
+  .tiles{grid-template-columns:1fr;}
+  .legend{gap:8px 16px;font-size:13px;}
+}
+@media print{
+  body{padding:0;font-size:12px;}
+  section.lever{break-inside:avoid;box-shadow:none;margin-bottom:14px;}
+  .charts{grid-template-columns:1fr 1fr;}
+}
+</style>
+</head>
+<body>
+
+<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:24px;flex-wrap:wrap;margin-bottom:26px;">
+  <h1>fabric capacity levers: reserve, pause, scale, overage</h1>
+  <span class="mode-pill"><span class="dot"></span>prices North Europe, EUR, checked 11 Sep 2026</span>
+</div>
+
+<!-- ============================ LEVER 1 ============================ -->
+<section class="lever" id="lever1">
+  <h2><span class="n">01</span>base capacity, plus peak for N days</h2>
+  <p class="read">Top up with pay-as-you-go for the days you need more, or just reserve the peak tier outright.</p>
+
+  <div class="ctl">
+    <div><label for="l1-sku">Base capacity</label><select id="l1-sku"></select></div>
+    <div><label for="l1-scale">Peak tier</label><select id="l1-scale"></select></div>
+    <div class="slide"><label for="l1-days">Days needing peak capacity</label>
+      <input type="range" id="l1-days" min="0" max="30" step="1" value="5">
+      <span class="out" id="l1-days-out" style="min-width:36px;">5</span></div>
+  </div>
+
+  <div class="charts">
+    <div class="chart"><h3>capacity across the month</h3><div id="l1-plot-a"></div></div>
+    <div class="chart"><h3>monthly cost: top up vs. reserve outright</h3><div id="l1-plot-b"></div></div>
+  </div>
+  <div class="legend">
+    <span><i style="background:#72C4BF;height:7px;"></i>base, reserved all month</span>
+    <span><i style="background:#EF463C;height:7px;"></i>peak, topped up with pay-as-you-go</span>
+    <span><i style="background:#C42828;height:13px;width:13px;border-radius:50%;"></i>crossover</span>
+  </div>
+
+  <div class="tiles" id="l1-tiles"></div>
+  <p class="verdict" id="l1-verdict"></p>
+</section>
+
+<!-- ============================ LEVER 2 ============================ -->
+<section class="lever" id="lever2">
+  <h2><span class="n">02</span>scale for background, pay the overage, or pause</h2>
+  <p class="read">Reverting leaves a 24-hour tail, billed at 3x. Pausing settles the same debt now, at 1x, but cancels the job.</p>
+
+  <div class="ctl">
+    <div><label for="l2-sku">Steady tier</label><select id="l2-sku"></select></div>
+    <!-- Defaults to 200%, a full tier double, where a breakeven duration actually exists.
+         At v1's 150% default the overage is cheaper at every duration up to 24 hours, so
+         the lever opened with nothing to show. -->
+    <div class="slide"><label for="l2-int">Burst usage</label>
+      <input type="range" id="l2-int" min="110" max="250" step="5" value="200">
+      <span class="out" id="l2-int-out" style="min-width:52px;">200%</span></div>
+    <div class="slide"><label for="l2-dur">Burst duration</label>
+      <input type="range" id="l2-dur" min="1" max="24" step="1" value="10">
+      <span class="out" id="l2-dur-out" style="min-width:42px;">10 h</span></div>
+    <div class="slide"><label for="l2-bg">Background floor</label>
+      <input type="range" id="l2-bg" min="0" max="95" step="5" value="80">
+      <span class="out" id="l2-bg-out" style="min-width:46px;">80%</span></div>
+  </div>
+
+  <div class="charts three">
+    <div class="chart"><h3>scale up for the burst, revert right after</h3><div id="l2-plot-a"></div></div>
+    <div class="chart"><h3>never resize, pay the overage</h3><div id="l2-plot-b"></div></div>
+    <div class="chart"><h3>pause instead</h3><div id="l2-plot-c"></div></div>
+  </div>
+  <div class="legend">
+    <span><i style="background:#0078D4;opacity:0.32;"></i>background, smoothed 24h</span>
+    <span><i style="background:#3C3C3C;height:3px;"></i>ceiling</span>
+    <span><i style="background:#C42828;opacity:0.2;"></i>overage, billed at 3x</span>
+    <span><i style="background:#3E8C88;height:5px;"></i>settles at once, at 1x</span>
+  </div>
+
+  <div class="tiles" id="l2-tiles"></div>
+  <p class="verdict" id="l2-verdict"></p>
+</section>
+
+<!-- ============================ LEVER 3 ============================ -->
+<section class="lever" id="lever3">
+  <h2><span class="n">03</span>scale for interactive, or pay the overage</h2>
+  <p class="read">No tail here, so only the height of the burst decides it.</p>
+
+  <div class="ctl">
+    <div><label for="l3-sku">Steady tier</label><select id="l3-sku"></select></div>
+    <div class="slide"><label for="l3-int">Burst usage</label>
+      <input type="range" id="l3-int" min="110" max="250" step="5" value="150">
+      <span class="out" id="l3-int-out" style="min-width:52px;">150%</span></div>
+    <div class="slide"><label for="l3-dur">Burst duration</label>
+      <input type="range" id="l3-dur" min="1" max="24" step="1" value="10">
+      <span class="out" id="l3-dur-out" style="min-width:42px;">10 h</span></div>
+    <div class="slide"><label for="l3-bg">Steady floor</label>
+      <input type="range" id="l3-bg" min="0" max="95" step="5" value="80">
+      <span class="out" id="l3-bg-out" style="min-width:46px;">80%</span></div>
+  </div>
+
+  <div class="charts">
+    <div class="chart"><h3>scale up for the burst, revert right after</h3><div id="l3-plot-a"></div></div>
+    <div class="chart"><h3>never resize, pay the overage instead</h3><div id="l3-plot-b"></div></div>
+  </div>
+  <div class="legend">
+    <span><i style="background:#C42828;opacity:0.18;"></i>interactive, smoothed 5 min</span>
+    <span><i style="background:#3C3C3C;height:3px;"></i>ceiling</span>
+    <span><i style="background:#C42828;opacity:0.2;"></i>overage, billed at 3x</span>
+  </div>
+
+  <div class="tiles" id="l3-tiles"></div>
+  <p class="verdict" id="l3-verdict"></p>
+</section>
+
+<p class="src">Scale and resize in whole days, never inside one, and read the remaining carry-forward before pausing: a pause also cancels running jobs. Lever 02 is a scale-and-revert burst, not the separate one-third rule that sizes an overage limit.</p>
+<p class="src" style="margin-top:8px;">Prices: North Europe, EUR, checked 11 Sep 2026 against the Azure retail price list. Pay-as-you-go EUR 0.1631 per CU-hour, reserved 1-year 40.5% below it, capacity overage 3x and in preview.</p>
+
+<hr style="border:none;border-top:0.5px solid var(--border);margin:1.5rem 0 1rem;max-width:1000px;">
+<p class="foot">Built by Frederik Declerck - delaware BeLux, an independent interactive model for illustration. Not official Microsoft guidance or a live pricing tool. Re-check current Fabric prices before acting on any number here. More on our Microsoft Fabric work at <a href="https://www.delaware.pro/en-be/solutions/microsoft/microsoft-fabric" target="_blank" rel="noopener">delaware.pro</a>. Companion tool: <a href="../licensing-crossover/licensing-crossover.html">the Pro vs PPU vs F64 licensing crossover</a>.</p>
+
+<script>
+/* ===================================================================
+   prices and rates
+   Re-sourced 2026-09-11 from Microsoft's Azure Retail Prices API
+   (currencyCode=EUR, serviceName eq 'Microsoft Fabric',
+   armRegionName eq 'northeurope'). Same basis as licensing-crossover.html.
+   PAYG EUR 0.1631/CU-hour x 730 h = 119.063 per CU per month.
+   Reserved 1-year EUR 850.0773/CU-year / 12 = 70.840, a 40.5% discount.
+   =================================================================== */
+var SKUS = [
+  {name:'F8',    cu:8,    payg:953,    reserved:567},
+  {name:'F16',   cu:16,   payg:1905,   reserved:1133},
+  {name:'F32',   cu:32,   payg:3810,   reserved:2267},
+  {name:'F64',   cu:64,   payg:7620,   reserved:4534},
+  {name:'F128',  cu:128,  payg:15240,  reserved:9067},
+  {name:'F256',  cu:256,  payg:30480,  reserved:18135},
+  {name:'F512',  cu:512,  payg:60960,  reserved:36270},
+  {name:'F1024', cu:1024, payg:121921, reserved:72540},
+  {name:'F2048', cu:2048, payg:243841, reserved:145080}
+];
+
+var paygRate = SKUS[0].payg / (SKUS[0].cu * 730);   /* EUR 0.163185 per CU-hour */
+
+/* One named constant, deliberately. The source line tells the reader to re-confirm the
+   multiplier before relying on it, so there has to be exactly one place to change it.
+   v1 had the bare literal 3 in four places. */
+var OVERAGE_MULTIPLIER = 3;
+
+/* ===================================================================
+   formatting
+   =================================================================== */
+function el(id){ return document.getElementById(id); }
+/* € 1.234,56: space after the sign, dot thousands, comma decimals -- matching
+   licensing-crossover.html and the rest of the deck/toolset. Supersedes the earlier
+   comma-grouping choice made for a mixed international room; Frederik's 2026-09-28
+   instruction was to make every euro value consistent with this convention. */
+function fmt(n){
+  const sign = Math.round(n) < 0 ? '-' : '';
+  const grouped = Math.abs(Math.round(n)).toLocaleString('en-US').replace(/,/g, '.');
+  return '€ ' + sign + grouped;
+}
+function fmt2(n){
+  const sign = n < 0 ? '-' : '';
+  const parts = Math.abs(n).toFixed(2).split('.');
+  return '€ ' + sign + parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + parts[1];
+}
+function num(n){ return Math.round(n).toLocaleString('en-US'); }
+function r1(v){ return Math.round(v * 10) / 10; }
+
+function fillSelect(sel, defaultName){
+  var out = '', i;
+  for (i = 0; i < SKUS.length; i++){
+    out += '<option value="' + i + '"' + (SKUS[i].name === defaultName ? ' selected' : '') + '>' + SKUS[i].name + '</option>';
+  }
+  sel.innerHTML = out;
+}
+
+/* Keep a paired select strictly above (dir 1) or below (dir -1) its anchor, so the model
+   can never be put in a state that reads as nonsense in a screenshot. v1 allowed "scale
+   up to" below "baseline", which silently produced a free scale-up and a blank caption. */
+function constrain(anchorSel, otherSel, dir){
+  var a = +anchorSel.value, cur = +otherSel.value, out = '', i;
+  for (i = 0; i < SKUS.length; i++){
+    if (dir > 0 && i <= a) continue;
+    if (dir < 0 && i >= a) continue;
+    out += '<option value="' + i + '">' + SKUS[i].name + '</option>';
+  }
+  if (out === ''){
+    otherSel.innerHTML = '<option value="' + a + '">' + SKUS[a].name + '</option>';
+    otherSel.value = a;
+    return;
+  }
+  otherSel.innerHTML = out;
+  var lo = dir > 0 ? a + 1 : 0, hi = dir > 0 ? SKUS.length - 1 : a - 1;
+  otherSel.value = Math.min(hi, Math.max(lo, cur));
+}
+
+/* ===================================================================
+   svg plot helpers
+   Stroke widths and font sizes follow the 2026-09-17 generated charts
+   (1 gridline, 2 axis, 3 ceiling, 3.5 interactive, 7 primary, 11 halo)
+   on the same 1580-wide coordinate frame, so the two sets read as one language.
+   =================================================================== */
+/* The charts are drawn on a fixed 1580-wide coordinate frame and scaled to the container
+   by CSS, so on a phone a font-size of 28 lands at about 6 real pixels. This file is meant
+   to be opened from a QR code, so narrow viewports get the same geometry with the type
+   stepped up and the canvas and gutters grown to match. One code path, one scale factor. */
+var COMPACT = window.matchMedia('(max-width: 760px)').matches;
+function fsFor(base){ return COMPACT ? Math.round(base * 1.8) : base; }
+
+function plotBox(W, H, l, r, t, b){ return {W:W, H:H, x0:l, x1:W - r, y0:t, y1:H - b}; }
+
+/* Same drawable proportions, bigger chrome, when the type has been stepped up. */
+function geo(W, H, l, r, t, b){
+  if (!COMPACT) return plotBox(W, H, l, r, t, b);
+  return plotBox(W, Math.round(H * 1.4), Math.round(l * 1.7), r, Math.round(t * 1.6), Math.round(b * 1.8));
+}
+function px(p, f){ return p.x0 + (p.x1 - p.x0) * f; }
+function py(p, f){ return p.y1 - (p.y1 - p.y0) * f; }
+
+function svgOpen(p, label){
+  return '<svg class="plot" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + p.W + ' ' + p.H +
+    '" font-family="Century Gothic, sans-serif" role="img" aria-label="' + label + '">' +
+    '<rect x="0" y="0" width="' + p.W + '" height="' + p.H + '" fill="#FFFFFF"/>';
+}
+
+function grid(p, ticks, fs){
+  var s = '', i;
+  for (i = 0; i < ticks.length; i++){
+    var y = py(p, ticks[i].f);
+    s += '<line x1="' + p.x0 + '" y1="' + r1(y) + '" x2="' + p.x1 + '" y2="' + r1(y) + '" stroke="#E2E2E2" stroke-width="1"/>' +
+         '<text x="' + (p.x0 - 16) + '" y="' + r1(y + fs / 3) + '" text-anchor="end" font-size="' + fs + '" fill="#999999">' + ticks[i].t + '</text>';
+  }
+  s += '<line x1="' + p.x0 + '" y1="' + p.y1 + '" x2="' + p.x1 + '" y2="' + p.y1 + '" stroke="#3C3C3C" stroke-width="2"/>';
+  return s;
+}
+
+/* First label anchors start, last anchors end, so edge labels never clip the canvas. */
+function xAxis(p, ticks, fs){
+  var s = '', y = p.y1 + fs + 14, i;
+  for (i = 0; i < ticks.length; i++){
+    var anchor = i === 0 ? 'start' : (i === ticks.length - 1 ? 'end' : 'middle');
+    s += '<text x="' + r1(px(p, ticks[i].f)) + '" y="' + y + '" text-anchor="' + anchor + '" font-size="' + fs + '" fill="#999999">' + ticks[i].t + '</text>';
+  }
+  return s;
+}
+
+/* A series of n samples as points. stepped emits the square-shouldered form the deck
+   uses for ceilings and raw usage: a value holds for the whole hour it covers. */
+function series(p, arr, yMax, stepped){
+  var pts = [], n = arr.length, i;
+  for (i = 0; i < n; i++){
+    var y = py(p, arr[i] / yMax);
+    if (stepped){ pts.push([px(p, i / n), y]); pts.push([px(p, (i + 1) / n), y]); }
+    else { pts.push([px(p, n === 1 ? 0 : i / (n - 1)), y]); }
+  }
+  return pts;
+}
+function path(pts){
+  var s = 'M' + r1(pts[0][0]) + ',' + r1(pts[0][1]), i;
+  for (i = 1; i < pts.length; i++) s += ' L' + r1(pts[i][0]) + ',' + r1(pts[i][1]);
+  return s;
+}
+function area(p, pts, color, op){
+  var s = r1(pts[0][0]) + ',' + p.y1, i;
+  for (i = 0; i < pts.length; i++) s += ' ' + r1(pts[i][0]) + ',' + r1(pts[i][1]);
+  s += ' ' + r1(pts[pts.length - 1][0]) + ',' + p.y1;
+  return '<polygon points="' + s + '" fill="' + color + '" fill-opacity="' + op + '"/>';
+}
+function line(pts, color, w, dash){
+  return '<path d="' + path(pts) + '" fill="none" stroke="' + color + '" stroke-width="' + w +
+    '" stroke-linecap="round" stroke-linejoin="round"' + (dash ? ' stroke-dasharray="' + dash + '"' : '') + '/>';
+}
+/* A line crossing a filled area gets a white halo first, so it stays readable over it.
+   From intraday-background-59.html, but narrower and lighter than the original: there the
+   haloed line runs mostly above the blue area, whereas here the raw-usage floor sits
+   inside it, and a 0.9-opacity halo carved a visible white channel through the fill. */
+function halo(pts, color, w){
+  return '<path d="' + path(pts) + '" fill="none" stroke="#FFFFFF" stroke-width="' + (w + 3) +
+    '" opacity="0.55" stroke-linejoin="round"/>' + line(pts, color, w);
+}
+/* The overage wash is always double-painted, an opaque white polygon then red at 0.2, so
+   the tint reads identically over gridlines, over the blue area and over white. */
+function wash(poly){
+  return '<polygon points="' + poly + '" fill="#FFFFFF"/><polygon points="' + poly + '" fill="#C42828" fill-opacity="0.2"/>';
+}
+/* The region where a load series sits above its ceiling, hour by hour. */
+function overageWash(p, load, ceiling, yMax){
+  var s = '', i, n = load.length;
+  for (i = 0; i < n; i++){
+    if (load[i] <= ceiling[i]) continue;
+    var xa = r1(px(p, i / n)), xb = r1(px(p, (i + 1) / n));
+    var yl = r1(py(p, load[i] / yMax)), yc = r1(py(p, ceiling[i] / yMax));
+    s += wash(xa + ',' + yc + ' ' + xb + ',' + yc + ' ' + xb + ',' + yl + ' ' + xa + ',' + yl);
+  }
+  return s;
+}
+function eventLine(p, f){
+  var x = r1(px(p, f));
+  return '<line x1="' + x + '" y1="' + p.y0 + '" x2="' + x + '" y2="' + p.y1 +
+    '" stroke="#3C3C3C" stroke-width="2" stroke-dasharray="5 6" opacity="0.55"/>';
+}
+
+/* ===================================================================
+   shared load models
+   =================================================================== */
+var WINDOW_HOURS = 60, BURST_START = 10;
+
+function requiredTierCU(steadyCU, neededCU){ var cu = steadyCU; while (cu < neededCU) cu *= 2; return cu; }
+
+function smooth24hTrailing(raw){
+  return raw.map(function(_, t){
+    var sum = 0, k;
+    for (k = 0; k < 24; k++){ var idx = t - k; sum += idx >= 0 ? raw[idx] : raw[0]; }
+    return sum / 24;
+  });
+}
+function buildBurstRaw(steadyCU, burstLevelCU, durationHours, floorFraction){
+  var raw = new Array(WINDOW_HOURS), i;
+  for (i = 0; i < WINDOW_HOURS; i++) raw[i] = floorFraction * steadyCU;
+  for (i = BURST_START; i < BURST_START + durationHours && i < WINDOW_HOURS; i++) raw[i] = burstLevelCU;
+  return raw;
+}
+function excess(load, ceiling){
+  var cuHours = 0, hours = 0, last = -1, i;
+  for (i = 0; i < load.length; i++){
+    if (load[i] > ceiling[i]){ cuHours += load[i] - ceiling[i]; hours++; last = i; }
+  }
+  return {cuHours:cuHours, hours:hours, last:last};
+}
+function ceilings(steadyCU, burstTierCU, durationHours){
+  var stepped = new Array(WINDOW_HOURS), flat = new Array(WINDOW_HOURS), i;
+  for (i = 0; i < WINDOW_HOURS; i++){
+    var inBurst = i >= BURST_START && i < BURST_START + durationHours;
+    stepped[i] = inBurst ? burstTierCU : steadyCU;
+    flat[i] = steadyCU;
+  }
+  return {stepped:stepped, flat:flat};
+}
+
+/* Background. Scaling holds the bigger tier for the burst, then reverts. Reverting does
+   not dodge the smoothing tail, which still clears against the reverted ceiling and is
+   billed as overage. Both terms have to be counted for the comparison to be honest.
+   The tier only has to cover the 24h-smoothed value, not the raw burst level -- background
+   billing is checked against the smoothed metric, so a raw spike well above a smaller
+   tier's ceiling is fine as long as the smoothed trailing average never crosses it. Sizing
+   against the raw level picks needlessly large tiers whenever the burst is short or intense
+   relative to its duration, inflating the "scale and revert" cost for a modelling reason,
+   not a real one. */
+function costBackground(steadyCU, intensityPct, durationHours, floorFraction){
+  var burstLevelCU = steadyCU * intensityPct / 100;
+  var raw = buildBurstRaw(steadyCU, burstLevelCU, durationHours, floorFraction);
+  var smoothed = smooth24hTrailing(raw);
+  var peakSmoothedDuringBurst = 0, i;
+  for (i = BURST_START; i < BURST_START + durationHours && i < WINDOW_HOURS; i++){
+    if (smoothed[i] > peakSmoothedDuringBurst) peakSmoothedDuringBurst = smoothed[i];
+  }
+  var burstTierCU = requiredTierCU(steadyCU, peakSmoothedDuringBurst);
+  var c = ceilings(steadyCU, burstTierCU, durationHours);
+  var tail = excess(smoothed, c.stepped);
+  var flatEx = excess(smoothed, c.flat);
+  var sticker = (burstTierCU - steadyCU) * paygRate * durationHours;
+  var tailCost = tail.cuHours * OVERAGE_MULTIPLIER * paygRate;
+  return {
+    burstLevelCU:burstLevelCU, burstTierCU:burstTierCU, raw:raw, smoothed:smoothed, ceil:c,
+    sticker:sticker, tailCost:tailCost, tail:tail, totalScale:sticker + tailCost,
+    overageCost:flatEx.cuHours * OVERAGE_MULTIPLIER * paygRate, flatEx:flatEx
+  };
+}
+
+/* Interactive. Five-minute smoothing is effectively instantaneous at hour resolution, so
+   there is no lag in and no tail out. Headroom arrives when you ask for it. */
+function costInteractive(steadyCU, intensityPct, durationHours, floorFraction){
+  var burstLevelCU = steadyCU * intensityPct / 100;
+  var burstTierCU = requiredTierCU(steadyCU, burstLevelCU);
+  var usage = buildBurstRaw(steadyCU, burstLevelCU, durationHours, floorFraction);
+  var c = ceilings(steadyCU, burstTierCU, durationHours);
+  var flatEx = excess(usage, c.flat);
+  return {
+    burstLevelCU:burstLevelCU, burstTierCU:burstTierCU, usage:usage, ceil:c,
+    sticker:(burstTierCU - steadyCU) * paygRate * durationHours,
+    overageCost:flatEx.cuHours * OVERAGE_MULTIPLIER * paygRate, flatEx:flatEx
+  };
+}
+
+/* Pausing: the same debt lever 2 already draws, up to the moment of the
+   pause, then not a cliff to zero. A real resume shows a genuine spike -- CU%
+   briefly shoots well past the ceiling as the queued operations execute at once,
+   the peak of repaid consumption -- then a short dip (the quiet moment right
+   after it clears), then an eased recovery back to the steady floor, not to
+   literal zero. This is illustrative shape only, the same way lever 3's jitter
+   is: the billed pauseCost is the accumulated CU-hours up to the revert hour,
+   times the PAYG rate, a scalar that doesn't depend on how the recovery is
+   drawn. Draws lever 2's third panel. */
+function pausePanel(p, fs, m, steadyCU, revertHour, ariaLabel){
+  function X(h){ return px(p, h / WINDOW_HOURS); }
+  function Y(cu){ return py(p, cu / yMaxFor); }
+
+  var debtPeak = Math.max.apply(null, m.smoothed.slice(0, revertHour + 1));
+  var spikeV = debtPeak * 1.9;
+  var yMaxFor = Math.max(steadyCU, debtPeak, spikeV) * 1.12;
+
+  var s = svgOpen(p, ariaLabel);
+  var ticks = [], k;
+  for (k = 1; k <= 3; k++){ var v = steadyCU * k; if (v <= yMaxFor) ticks.push({f: v / yMaxFor, t: num(v) + ' CU'}); }
+  s += grid(p, ticks, fs);
+  s += xAxis(p, [{f:0,t:'0h'},{f:0.4,t:'24h'},{f:0.8,t:'48h'},{f:1,t:'60h'}], fs);
+
+  var pre = [], i;
+  for (i = 0; i <= revertHour; i++) pre.push([X(i), Y(m.smoothed[i])]);
+  var dip = steadyCU * 0.15;
+  var post = [
+    [X(revertHour),       Y(m.smoothed[revertHour])],
+    [X(revertHour + 0.4), Y(spikeV)],
+    [X(revertHour + 0.8), Y(dip)],
+    [X(revertHour + 2),   Y(dip + (steadyCU - dip) * 0.35)],
+    [X(revertHour + 4),   Y(dip + (steadyCU - dip) * 0.60)],
+    [X(revertHour + 6.5), Y(dip + (steadyCU - dip) * 0.80)],
+    [X(revertHour + 10),  Y(dip + (steadyCU - dip) * 0.93)],
+    [X(revertHour + 14),  Y(steadyCU)]
+  ];
+  var all = pre.concat(post);
+  s += area(p, all, '#0078D4', 0.32);
+  for (i = 0; i < revertHour; i++){
+    if (m.smoothed[i] > steadyCU){
+      var xa = X(i), xb = X(i + 1), yc = Y(steadyCU), yl = Y(m.smoothed[i]);
+      s += wash(xa + ',' + yc + ' ' + xb + ',' + yc + ' ' + xb + ',' + yl + ' ' + xa + ',' + yl);
+    }
+  }
+  s += line([[p.x0, Y(steadyCU)], [p.x1, Y(steadyCU)]], '#3C3C3C', 3, '10 7');
+  s += line(pre, '#0078D4', 7);
+  s += line(post, '#3E8C88', 5);
+  s += eventLine(p, BURST_START / WINDOW_HOURS);
+  s += eventLine(p, revertHour / WINDOW_HOURS);
+  s += '</svg>';
+  return s;
+}
+
+function tileHTML(label, val, sub, win, pill){
+  return '<div class="tile' + (win ? ' winner' : '') + '"><p class="label">' + label +
+    (pill || '') + '</p><p class="val">' + val + '</p><p class="sub">' + sub + '</p></div>';
+}
+
+/* ===================================================================
+   lever 1: base capacity, plus peak for N days
+   Rebuilt 2026-09-27. The old lever ran two unrelated scenarios off two
+   different sliders: "days running" drove a same-tier PAYG-vs-reserved chart,
+   while "peak tier / days at peak" fed a third tile with no chart of its own.
+   One scenario now, with a visual for each half of it: a base tier reserved
+   the whole month, topped up with pay-as-you-go for the days that need more,
+   compared against just reserving the peak tier outright.
+   =================================================================== */
+function renderL1(){
+  var base = SKUS[+el('l1-sku').value];
+  var scale = SKUS[+el('l1-scale').value];
+  var N = +el('l1-days').value;
+  el('l1-days-out').textContent = N;
+
+  function topUp(n){ return base.reserved + (scale.payg - base.payg) * n / 30; }
+  var topUpCost = topUp(N);
+  var outrightCost = scale.reserved;
+  /* Comes out close to 17.85 days for almost any base/peak pair, not exactly --
+     the reservation discount is close to a uniform 40.5% across tiers, but the
+     published prices are rounded to the euro, not derived from one exact rate,
+     so this isn't the same kind of closed identity the old 59.5% crossover was. */
+  var crossN = 30 * (scale.reserved - base.reserved) / (scale.payg - base.payg);
+
+  /* panel A: capacity across the month -- a flat reserved floor, with a raised
+     block for the N days that also need the peak tier. */
+  var pA = geo(790, 450, 118, 22, 40, 68), fsA = fsFor(22);
+  var yMaxA = scale.cu * 1.15;
+  var ticksA = [], k;
+  for (k = 1; k <= 4; k++){ var v = scale.cu * k / 4; ticksA.push({f: v / yMaxA, t: num(v) + ' CU'}); }
+  var baseFracA = base.cu / yMaxA;
+  if (!ticksA.some(function(t){ return Math.abs(t.f - baseFracA) < 0.01; })){
+    ticksA.push({f: baseFracA, t: num(base.cu) + ' CU'});
+  }
+  function XA(f){ return px(pA, f); }
+  function YA(cu){ return py(pA, cu / yMaxA); }
+  var sA = svgOpen(pA, 'Capacity across the month. ' + base.name + ' runs all 30 days; ' +
+    scale.name + ' covers the ' + N + ' days needing more.');
+  sA += grid(pA, ticksA, fsA);
+  sA += xAxis(pA, [{f:0,t:'0 d'},{f:1/3,t:'10 d'},{f:2/3,t:'20 d'},{f:1,t:'30 d'}], fsA);
+  sA += area(pA, [[XA(0), YA(base.cu)], [XA(1), YA(base.cu)]], '#72C4BF', 0.3);
+  sA += line([[XA(0), YA(base.cu)], [XA(1), YA(base.cu)]], '#72C4BF', 7);
+  if (N > 0){
+    var nFrac = N / 30;
+    sA += '<polygon points="' + XA(0) + ',' + YA(base.cu) + ' ' + XA(0) + ',' + YA(scale.cu) + ' ' +
+      XA(nFrac) + ',' + YA(scale.cu) + ' ' + XA(nFrac) + ',' + YA(base.cu) +
+      '" fill="#EF463C" fill-opacity="0.28"/>';
+    sA += line([[XA(0), YA(scale.cu)], [XA(nFrac), YA(scale.cu)], [XA(nFrac), YA(base.cu)]], '#EF463C', 7);
+    sA += eventLine(pA, nFrac);
+  }
+  sA += '</svg>';
+  el('l1-plot-a').innerHTML = sA;
+
+  /* panel B: the cost crossover, same two-line-plus-dot-plus-selection mechanic
+     the old single chart used, reformulated around the new scenario. */
+  var pB = geo(790, 450, 130, 22, 40, 68), fsB = fsFor(22);
+  var yMaxB = Math.max(topUp(30), outrightCost) * 1.1;
+  var ticksB = [];
+  for (k = 1; k <= 4; k++){ var vb = yMaxB * k / 4; ticksB.push({f: vb / yMaxB, t: fmt(vb)}); }
+  function XB(f){ return px(pB, f); }
+  function YB(cost){ return py(pB, cost / yMaxB); }
+  var sB = svgOpen(pB, 'Monthly cost against days needing peak capacity. Reserving ' + scale.name +
+    ' outright is flat at ' + fmt(outrightCost) + '. Topping up from ' + base.name +
+    ' rises to ' + fmt(topUp(30)) + ' at 30 days. The two cross at about ' + r1(crossN) + ' days.');
+  sB += grid(pB, ticksB, fsB);
+  sB += xAxis(pB, [{f:0,t:'0 d'},{f:1/3,t:'10 d'},{f:2/3,t:'20 d'},{f:1,t:'30 d'}], fsB);
+  sB += line([[XB(0), YB(topUp(0))], [XB(1), YB(topUp(30))]], '#EF463C', 7);
+  sB += line([[XB(0), YB(outrightCost)], [XB(1), YB(outrightCost)]], '#72C4BF', 7);
+
+  var crossFracB = crossN / 30;
+  if (crossFracB >= 0 && crossFracB <= 1){
+    var cxB = XB(crossFracB), cyB = YB(outrightCost);
+    sB += '<line x1="' + r1(cxB) + '" y1="' + r1(cyB) + '" x2="' + r1(cxB) + '" y2="' + pB.y1 +
+      '" stroke="#C42828" stroke-width="2" stroke-dasharray="7 7"/>';
+    sB += '<circle cx="' + r1(cxB) + '" cy="' + r1(cyB) + '" r="11" fill="#C42828"/>';
+  }
+
+  var selCheaperB = topUpCost <= outrightCost;
+  var selXB = XB(N / 30), selYB = YB(selCheaperB ? topUpCost : outrightCost);
+  var selColorB = selCheaperB ? '#EF463C' : '#72C4BF';
+  sB += '<line x1="' + r1(selXB) + '" y1="' + pB.y0 + '" x2="' + r1(selXB) + '" y2="' + pB.y1 +
+    '" stroke="#3C3C3C" stroke-width="2.5" opacity="0.6"/>';
+  sB += '<circle cx="' + r1(selXB) + '" cy="' + r1(selYB) + '" r="13" fill="' + selColorB +
+    '" stroke="#3C3C3C" stroke-width="2.5"/>';
+  sB += '</svg>';
+  el('l1-plot-b').innerHTML = sB;
+
+  var cheapest = Math.min(topUpCost, outrightCost);
+  var best = '<span class="pill pill-best">cheapest</span>';
+  el('l1-tiles').innerHTML =
+    tileHTML('reserve ' + base.name + ', top up ' + N + ' d', fmt(topUpCost),
+      fmt(base.reserved) + ' + ' + fmt(topUpCost - base.reserved) + ' incremental at ' + scale.name,
+      topUpCost === cheapest, topUpCost === cheapest ? best : '') +
+    tileHTML('reserve ' + scale.name + ' outright', fmt(outrightCost), 'flat every month, used or not',
+      outrightCost === cheapest, outrightCost === cheapest ? best : '');
+
+  var v;
+  if (topUpCost < outrightCost){
+    v = '<b>Topping up wins by ' + fmt(outrightCost - topUpCost) + ' a month.</b>';
+  } else if (topUpCost > outrightCost){
+    v = '<b>Reserving ' + scale.name + ' outright wins by ' + fmt(topUpCost - outrightCost) + ' a month.</b>';
+  } else {
+    v = '<b>Break-even.</b>';
+  }
+  v += ' Crosses at about ' + r1(crossN) + ' days for this pair, close to 17.85 days for ' +
+    'almost any base/peak pair, since the reservation discount is close to a uniform 40.5% ' +
+    'across tiers.';
+  el('l1-verdict').innerHTML = v;
+}
+
+/* ===================================================================
+   lever 2: background
+   =================================================================== */
+function renderL2(){
+  var steady = SKUS[+el('l2-sku').value];
+  var pct = +el('l2-int').value, dur = +el('l2-dur').value, bg = +el('l2-bg').value;
+  el('l2-int-out').textContent = pct + '%';
+  el('l2-dur-out').textContent = dur + ' h';
+  el('l2-bg-out').textContent = bg + '%';
+
+  var m = costBackground(steady.cu, pct, dur, bg / 100);
+  var yMax = Math.max(Math.max.apply(null, m.smoothed), m.burstTierCU, m.burstLevelCU) * 1.14;
+
+  function panel(id, stepped, label){
+    var p = geo(790, 450, 118, 22, 40, 108), fs = fsFor(22);
+    var ceil = stepped ? m.ceil.stepped : m.ceil.flat;
+    var ticks = [], k;
+    for (k = 1; k <= 3; k++){ var v = steady.cu * k; if (v / yMax <= 1.02) ticks.push({f:v / yMax, t:num(v) + ' CU'}); }
+    var s = svgOpen(p, label);
+    s += grid(p, ticks, fs);
+    s += xAxis(p, [{f:0,t:'0h'},{f:0.4,t:'24h'},{f:0.8,t:'48h'},{f:1,t:'60h'}], fs);
+    var sm = series(p, m.smoothed, yMax, false);
+    s += area(p, sm, '#0078D4', 0.32);
+    s += overageWash(p, m.smoothed, ceil, yMax);
+    s += line(series(p, ceil, yMax, true), '#3C3C3C', 3, '10 7');
+    s += line(sm, '#0078D4', 7);
+    s += eventLine(p, BURST_START / WINDOW_HOURS);
+    s += eventLine(p, (BURST_START + dur) / WINDOW_HOURS);
+    s += '</svg>';
+    el(id).innerHTML = s;
+  }
+  panel('l2-plot-a', true, 'Background load smoothed over 24 hours against a ceiling that steps up to ' +
+    num(m.burstTierCU) + ' CU for the burst and back down. The red band after the revert is the residual tail.');
+  panel('l2-plot-b', false, 'The same load against a flat ' + num(steady.cu) +
+    ' CU ceiling. Everything above the ceiling is overage.');
+  el('l2-plot-c').innerHTML = pausePanel(
+    geo(790, 450, 118, 22, 40, 108), fsFor(22), m, steady.cu, BURST_START + dur,
+    'The same build-up, then paused at the revert hour: a spike as the backlog drains, ' +
+    'a short dip, then a recovery back to the steady floor.');
+
+  /* Pausing settles the identical debt this panel already draws -- the same
+     m.flatEx.cuHours the "pay overage" tile bills at 3x, just billed once at 1x
+     instead of continuously. No new model: it's the existing debt at a different
+     rate, which is also why it needs no chart of its own. */
+  var pauseCost = m.flatEx.cuHours * paygRate;
+
+  var overageWins = m.overageCost <= m.totalScale;
+  var cheapest = Math.min(m.totalScale, m.overageCost, pauseCost);
+  var cheaper = '<span class="pill pill-best">cheaper</span>';
+  el('l2-tiles').innerHTML =
+    tileHTML('scale up and revert', fmt2(m.totalScale),
+      fmt2(m.sticker) + ' sticker + ' + fmt2(m.tailCost) + ' tail (' + m.tail.hours + ' h, at 3x)',
+      m.totalScale === cheapest, m.totalScale === cheapest ? cheaper : '') +
+    tileHTML('never resize, pay overage', fmt2(m.overageCost),
+      num(m.flatEx.cuHours) + ' CU-h excess, at 3x', m.overageCost === cheapest, m.overageCost === cheapest ? cheaper : '') +
+    tileHTML('pause instead', fmt2(pauseCost),
+      num(m.flatEx.cuHours) + ' CU-h, at 1x (cancels the job)', pauseCost === cheapest, pauseCost === cheapest ? cheaper : '');
+
+  /* Breakeven is found numerically, for scale vs. overage only -- there is no closed
+     form for the background case, because the tail depends on the shape of the
+     smoothed curve. A draft slide once carried an invented formula for this and it
+     was removed. Do not reintroduce one. Pause has no comparable breakeven to find:
+     it is exactly one-third of the "pay overage" figure at every duration (the same
+     debt, billed at 1x instead of 3x), so it is cheaper than paying overage always,
+     and cheaper than scaling and reverting on every input tried -- stated plainly
+     below rather than manufacturing a crossover that the numbers don't support. */
+  var be = null, h;
+  for (h = 1; h <= 24; h++){
+    var t = costBackground(steady.cu, pct, h, bg / 100);
+    if (t.overageCost > t.totalScale){ be = h; break; }
+  }
+  /* Pausing is exactly one-third of the "pay overage" figure at every input (the same
+     debt, billed at 1x instead of 3x), and 1x is never worse than 3x, so it never
+     loses to either alternative -- checked across the sliders' full range, not just
+     asserted. Lead with that plainly, rather than still calling "pay overage" the
+     winner of a two-way race the tiles no longer show. */
+  var v = '<b>Pausing is cheapest, by ' + fmt2(Math.min(m.totalScale, m.overageCost) - pauseCost) +
+    '.</b> It settles the same debt at 1x instead of 3x, but cancels the job. If the job has to run to completion, that\'s off the table, and the choice is between the other two: ';
+  v += overageWins
+    ? 'paying the overage wins by ' + fmt2(m.totalScale - m.overageCost) + '.'
+    : 'scaling and reverting wins by ' + fmt2(m.overageCost - m.totalScale) + '.';
+  v += be ? ' Scaling takes over past <b>' + be + ' hours</b> at this height.'
+          : ' Overage stays cheaper at every duration up to 24 hours at this height.';
+  el('l2-verdict').innerHTML = v;
+
+}
+
+/* ===================================================================
+   lever 3: interactive
+   =================================================================== */
+function renderL3(){
+  var steady = SKUS[+el('l3-sku').value];
+  var pct = +el('l3-int').value, dur = +el('l3-dur').value, bg = +el('l3-bg').value;
+  el('l3-int-out').textContent = pct + '%';
+  el('l3-dur-out').textContent = dur + ' h';
+  el('l3-bg-out').textContent = bg + '%';
+
+  var m = costInteractive(steady.cu, pct, dur, bg / 100);
+  var yMax = Math.max(m.burstTierCU, m.burstLevelCU) * 1.14;
+
+  /* Interactive traffic is real, bursty, per-query load, not one clean rectangular
+     block -- display only, the same rule lever 2's pause spike follows: the billed
+     numbers (m.sticker, m.overageCost, m.flatEx) come from the clean m.usage array
+     above and are untouched by this. Two bands:
+       - floor: 60-100% of the ceiling, so it stays visibly under it, never crossing
+         into overage on its own.
+       - burst: +/-18% around the burst level, since it's meant to sit over the
+         ceiling -- that's the point of it.
+     Both use the same two-term sine, indexed by the hour value itself (not by
+     sub-step count): a sub-step index cycles every ~15 minutes and the spikes
+     collide into a dense fuzzed band at any chart width; indexed by hours, the
+     dominant term cycles every ~5h and the second every ~2h, far enough apart that
+     individual spikes read as distinct rather than a blur. */
+  function spikyUsagePts(p, ceiling){
+    var sub = 6, pts = [], i, n = WINDOW_HOURS * sub;
+    for (i = 0; i <= n; i++){
+      var hr = i / sub, inBurst = hr >= BURST_START && hr < BURST_START + dur, v;
+      if (inBurst){
+        v = m.burstLevelCU * (1 + 0.12 * Math.sin(hr * 1.3) + 0.06 * Math.sin(hr * 2.9));
+      } else {
+        var unit = 0.7 * Math.sin(hr * 1.3) + 0.3 * Math.sin(hr * 2.9);
+        v = ceiling * (0.80 + 0.20 * unit);
+      }
+      pts.push([px(p, hr / WINDOW_HOURS), py(p, Math.max(0, v) / yMax)]);
+    }
+    return pts;
+  }
+
+  function panel(id, stepped, label){
+    var p = geo(790, 450, 118, 22, 40, 108), fs = fsFor(22);
+    var ceil = stepped ? m.ceil.stepped : m.ceil.flat;
+    var ticks = [], k;
+    for (k = 1; k <= 3; k++){ var v = steady.cu * k; if (v / yMax <= 1.02) ticks.push({f:v / yMax, t:num(v) + ' CU'}); }
+    var s = svgOpen(p, label);
+    s += grid(p, ticks, fs);
+    s += xAxis(p, [{f:0,t:'0h'},{f:0.4,t:'24h'},{f:0.8,t:'48h'},{f:1,t:'60h'}], fs);
+    /* Filled under the line, matching lever 2's background fill, so interactive usage
+       reads at the same visual weight instead of as a bare stroke. Lighter than lever 2's
+       0.32 (a filled ceiling-to-usage read is less useful here — there's no lag, so the
+       fill only ever reaches the ceiling, never lags behind it) — kept faint enough that
+       the overage wash on top still reads as the stronger of the two tints. */
+    var usagePts = series(p, m.usage, yMax, true);
+    var spikyPts = spikyUsagePts(p, steady.cu);
+    s += area(p, usagePts, '#C42828', 0.18);
+    s += overageWash(p, m.usage, ceil, yMax);
+    s += line(series(p, ceil, yMax, true), '#3C3C3C', 3, '10 7');
+    s += line(spikyPts, '#C42828', 3.5);
+    s += eventLine(p, BURST_START / WINDOW_HOURS);
+    s += eventLine(p, (BURST_START + dur) / WINDOW_HOURS);
+    s += '</svg>';
+    el(id).innerHTML = s;
+  }
+  panel('l3-plot-a', true, 'Interactive load, filled, against a ceiling that steps up to ' + num(m.burstTierCU) +
+    ' CU for the burst. No lag in, no tail out, so nothing is left above the ceiling.');
+  panel('l3-plot-b', false, 'The same load against a flat ' + num(steady.cu) +
+    ' CU ceiling. The red band is exactly as wide as the burst.');
+
+  var overageWins = m.overageCost <= m.sticker;
+  var tierMultiple = m.burstTierCU / steady.cu;
+  var crossoverPct = (1 + (tierMultiple - 1) / OVERAGE_MULTIPLIER) * 100;
+  var cheaper = '<span class="pill pill-best">cheaper</span>';
+  el('l3-tiles').innerHTML =
+    tileHTML('scale up and revert', fmt2(m.sticker),
+      num(m.burstTierCU - steady.cu) + ' CU x ' + dur + ' h, no tail',
+      !overageWins, !overageWins ? cheaper : '') +
+    tileHTML('never resize, pay overage', fmt2(m.overageCost),
+      num(m.flatEx.cuHours) + ' CU-h excess, at 3x', overageWins, overageWins ? cheaper : '');
+
+  el('l3-verdict').innerHTML = (overageWins
+    ? '<b>Paying the overage wins by ' + fmt2(m.sticker - m.overageCost) + '.</b> '
+    : '<b>Scaling wins by ' + fmt2(m.overageCost - m.sticker) + '.</b> ') +
+    'It flips at <b>' + r1(crossoverPct) + '%</b> of capacity, at any duration.';
+}
+
+/* ===================================================================
+   wiring
+   =================================================================== */
+fillSelect(el('l1-sku'), 'F32');
+fillSelect(el('l1-scale'), 'F64');
+fillSelect(el('l2-sku'), 'F16');
+fillSelect(el('l3-sku'), 'F16');
+constrain(el('l1-sku'), el('l1-scale'), 1);
+
+function bind(ids, fn){
+  for (var i = 0; i < ids.length; i++){
+    var e = el(ids[i]);
+    e.addEventListener('input', fn);
+    e.addEventListener('change', fn);
+  }
+}
+bind(['l1-days'], renderL1);
+bind(['l1-sku'], function(){ constrain(el('l1-sku'), el('l1-scale'), 1); renderL1(); });
+bind(['l1-scale'], renderL1);
+bind(['l2-sku', 'l2-int', 'l2-dur', 'l2-bg'], renderL2);
+bind(['l3-sku', 'l3-int', 'l3-dur', 'l3-bg'], renderL3);
+
+renderL1(); renderL2(); renderL3();
+
+window.addEventListener('resize', function(){
+  var now = window.matchMedia('(max-width: 760px)').matches;
+  if (now === COMPACT) return;
+  COMPACT = now;
+  renderL1(); renderL2(); renderL3();
+});
+</script>
+</body>
+</html>

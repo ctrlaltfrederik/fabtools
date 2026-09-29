@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Costs three Power BI licensing paths side by side against a Fabric capacity: Pro for all, F64 or above with free viewers, and PPU for all. Finds the viewer count where the free-viewer threshold pays for itself. Built by delaware.">
 <title>fabric licensing crossover: Pro vs PPU vs F64</title>
 <style>
 :root{
@@ -51,6 +52,21 @@ input[type=checkbox]{accent-color:var(--border-accent);}
 .calc{font-family:var(--font-sans);font-variant-numeric:tabular-nums;font-size:15px;color:var(--text-primary);}
 .bignum{font-size:26px;font-weight:700;color:var(--text-accent);}
 .legend-sw{width:16px;height:16px;border-radius:4px;flex:none;}
+a{color:var(--text-accent);text-decoration:underline;text-underline-offset:2px;}
+
+/* Added 2026-09-18, when this file became a take-home artifact rather than only a slide
+   capture source. It will be opened from a QR code on a phone and printed. */
+@media (max-width:760px){
+  body{padding:18px;font-size:16px;}
+  h1{font-size:23px;}
+  .mode-pill{font-size:13px;padding:6px 13px;}
+  .mode-pill .dot{width:10px;height:10px;}
+  select,input[type=range]{font-size:15px;}
+  select{height:38px;}
+}
+@media print{
+  body{padding:0;font-size:12px;}
+}
 </style>
 </head>
 <body>
@@ -59,6 +75,10 @@ input[type=checkbox]{accent-color:var(--border-accent);}
   <h1>fabric licensing crossover: Pro vs PPU vs F64</h1>
   <span id="pricing-pill" class="mode-pill reserved"><span class="dot"></span><span id="pricing-pill-text">Reserved pricing, 1yr, -40.5%</span></span>
 </div>
+<!-- Added 2026-09-18. The conclusion paragraph below the bars already teaches the reader
+     where to look, but nothing said so up front, and this file now goes out without a
+     presenter attached to say it. The p.subtitle rule existed and was never used. -->
+<p class="subtitle">Three paths costed against one capacity. Set your viewer and creator counts, then read which bar is shortest and where the crossover tick sits on the viewers slider.</p>
 
 <div style="display:flex;flex-wrap:wrap;gap:20px;margin-bottom:14px;">
   <div style="display:flex;align-items:center;gap:10px;">
@@ -82,7 +102,7 @@ input[type=checkbox]{accent-color:var(--border-accent);}
   </div>
   <label style="display:flex;align-items:center;gap:10px;font-size:18px;color:var(--text-secondary);">
     <input type="checkbox" id="e5" style="width:22px;height:22px;">
-    Org has E5 (Power BI Pro included)
+    Org has E5/E7 (Power BI Pro included)
   </label>
 </div>
 
@@ -115,7 +135,7 @@ input[type=checkbox]{accent-color:var(--border-accent);}
 <p style="font-size:13px;color:var(--text-muted);margin:0;line-height:1.5;max-width:1120px;">Prices: North Europe, EUR, capacity checked 11 Sep 2026 against the Azure retail price list; Power BI Pro EUR 12.10 and PPU EUR 20.80 per user per month, ex-VAT, Eurozone.</p>
 
 <hr style="border:none;border-top:0.5px solid var(--border);margin:1.5rem 0 1rem;max-width:1120px;">
-<p style="font-size:13px;color:var(--text-muted);margin:0;line-height:1.6;max-width:1120px;">Built by delaware — an independent interactive model for illustration, not official Microsoft guidance or a live pricing tool; re-check current Fabric and Power BI prices before acting on any number here. &copy; delaware. All rights reserved.</p>
+<p style="font-size:13px;color:var(--text-muted);margin:0;line-height:1.6;max-width:1120px;">Built by Frederik Declerck - delaware BeLux, an independent interactive model for illustration. Not official Microsoft guidance or a live pricing tool. Re-check current Fabric and Power BI prices before acting on any number here. More on our Microsoft Fabric work at <a href="https://www.delaware.pro/en-be/solutions/microsoft/microsoft-fabric" target="_blank" rel="noopener">delaware.pro</a>. Companion tool: <a href="../capacity-levers/capacity-levers.html">the reserve, pause, scale and overage levers</a>.</p>
 
 <script>
 // Prices re-sourced 2026-09-11 from Microsoft's Azure Retail Prices API
@@ -167,11 +187,20 @@ const markerLabel = document.getElementById('marker-label');
 const pricingPill = document.getElementById('pricing-pill');
 const pricingPillText = document.getElementById('pricing-pill-text');
 
-function fmt(n){ return '€' + Math.round(n).toLocaleString('en-US'); }
+// € 1.234,56: space after the sign, dot thousands, comma decimals.
+function fmt(n){
+  const sign = Math.round(n) < 0 ? '-' : '';
+  const grouped = Math.abs(Math.round(n)).toLocaleString('en-US').replace(/,/g, '.');
+  return '€ ' + sign + grouped;
+}
 // Per-user licence rates need their cents: Frederik asked for the unit price to be
 // visible, and rounding EUR 12.10 to "12" and EUR 20.80 to "21" defeats that. Totals
 // stay whole-euro via fmt(); only the per-user rate uses fmtU().
-function fmtU(n){ return '€' + n.toFixed(2); }
+function fmtU(n){
+  const sign = n < 0 ? '-' : '';
+  const parts = Math.abs(n).toFixed(2).split('.');
+  return '€ ' + sign + parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + parts[1];
+}
 function priceOf(sku, mode){ return mode === 'reserved' ? sku.reserved : sku.payg; }
 function skuAtLeast(minCu, minModelGB){
   return SKUS.find(function(s){ return s.cu >= minCu && s.maxModelGB >= minModelGB; }) || SKUS[SKUS.length - 1];
@@ -225,9 +254,9 @@ function render(){
     reason: bViable ? undefined : 'model (' + model.toFixed(1) + ' GB) exceeds ' + bSku.name + '\'s ' + bSku.maxModelGB + ' GB limit' };
 
   const rows = [
-    Object.assign({ name: 'A: Pro for all', users: viewers + creators, rate: proRate, licenseNote: e5 ? 'Pro, included via E5' : 'Pro' }, aHost),
-    Object.assign({ name: 'B: F64+, free viewers', users: creators, rate: proRate, licenseNote: e5 ? 'Pro, included via E5' : 'Pro (creators only)' }, bHost),
-    Object.assign({ name: 'C: PPU for all', users: viewers + creators, rate: ppuRate, licenseNote: e5 ? 'PPU bump over Pro (E5)' : 'PPU' }, cHost)
+    Object.assign({ name: 'A: Pro for all', users: viewers + creators, rate: proRate, licenseNote: e5 ? 'Pro, included via E5/E7' : 'Pro' }, aHost),
+    Object.assign({ name: 'B: F64+, free viewers', users: creators, rate: proRate, licenseNote: e5 ? 'Pro, included via E5/E7' : 'Pro (creators only)' }, bHost),
+    Object.assign({ name: 'C: PPU for all', users: viewers + creators, rate: ppuRate, licenseNote: e5 ? 'PPU bump over Pro (E5/E7)' : 'PPU' }, cHost)
   ];
   rows.forEach(function(r){
     r.licenseCost = r.users * r.rate;
@@ -277,7 +306,7 @@ function render(){
 
   if (proRate === 0) {
     marker.style.display = 'none';
-    crossoverEl.innerHTML = 'With E5 already covering Pro, Power BI licence cost is a wash between A and B, the decision becomes pure capacity sizing: cheapest viable hosting wins. PPU still costs the €10 bump over Pro rather than the full €24.';
+    crossoverEl.innerHTML = 'With E5/E7 already covering Pro, Power BI licence cost is a wash between A and B, the decision becomes pure capacity sizing: cheapest viable hosting wins. PPU still costs the ' + fmtU(PPU_E5_BUMP) + ' bump over Pro rather than the full ' + fmtU(PPU) + '.';
   } else {
     const diff = bHost.capacityCost - aHost.capacityCost;
     if (diff <= 0) {
